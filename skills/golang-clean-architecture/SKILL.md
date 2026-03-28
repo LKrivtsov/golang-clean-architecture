@@ -80,10 +80,11 @@ internal/
     server/          # HTTP server lifecycle
 pkg/                 # shared utilities (optional, keep minimal)
 docs/                # generated OpenAPI/Swagger spec (see section 20)
+Dockerfile           # multi-stage build: dev (air) + production (see section 16)
 Makefile             # project automation (see section 15)
 docker-compose.yml   # local dev environment (see section 16)
 .air.toml            # live reload config
-.env                 # environment variables (see section 17)
+.env                 # environment variables — DB_HOST=postgres (docker network) (see section 17)
 .env.example         # template with placeholder values
 ```
 
@@ -105,12 +106,12 @@ docker-compose.yml   # local dev environment (see section 16)
 Standard resource endpoints follow this pattern:
 
 ```
-GET    /api/users              # List users (with pagination)
-POST   /api/users              # Create user
-GET    /api/users/{id}         # Get specific user
-PUT    /api/users/{id}         # Replace user (full update)
-PATCH  /api/users/{id}         # Update user fields (partial)
-DELETE /api/users/{id}         # Delete user
+GET    /api/v1/users              # List users (with pagination)
+POST   /api/v1/users              # Create user
+GET    /api/v1/users/{id}         # Get specific user
+PUT    /api/v1/users/{id}         # Replace user (full update)
+PATCH  /api/v1/users/{id}         # Update user fields (partial)
+DELETE /api/v1/users/{id}         # Delete user
 ```
 
 - Resources are nouns, not verbs: `/users`, `/orders/{id}/items`
@@ -134,8 +135,8 @@ DELETE /api/users/{id}         # Delete user
 All list endpoints use **page-based pagination** with `page` and `pageSize` query parameters:
 
 ```
-GET /api/users?page=1&pageSize=20
-GET /api/users?page=2&pageSize=20&status=active
+GET /api/v1/users?page=1&pageSize=20
+GET /api/v1/users?page=2&pageSize=20&status=active
 ```
 
 - **Parameters**: `page` (1-based), `pageSize` (default 20)
@@ -375,12 +376,15 @@ build:            ## Build the binary
 
 # --- Docker ---
 .PHONY: up down
-up:               ## Start all services (docker-compose)
-	@docker-compose up -d
+up:               ## Build and start all services (docker-compose) with live reload
+	@docker-compose up -d --build
 down:             ## Stop all services
 	@docker-compose down
 
 # --- Database / Migrations ---
+# Migrations run on the HOST machine, so DATABASE_URL uses localhost (not the docker service name).
+DATABASE_URL ?= postgres://postgres:postgres@localhost:5432/app?sslmode=disable
+
 .PHONY: migrate-up migrate-down migrate-create
 migrate-up:       ## Apply all pending migrations
 	@migrate -path internal/adapter/postgres/migrations -database "$(DATABASE_URL)" up
@@ -419,9 +423,52 @@ help:             ## Show this help
 
 ---
 
-## 16. Docker Compose & Live Reload
+## 16. Dockerfile, Docker Compose & Live Reload
 
-Every project MUST have a `docker-compose.yml` for local development. Use `air` for live reload of the Go server.
+Every project MUST have a `Dockerfile` and a `docker-compose.yml` for local development. Use `air` for live reload of the Go server.
+
+### Dockerfile
+
+The Dockerfile MUST always be created at the project root. It uses a multi-stage build: a development stage with `air` for live reload, and a production stage with a minimal image.
+
+```dockerfile
+# --- Development stage (used by docker-compose for live reload) ---
+FROM golang:1.23-alpine AS dev
+
+RUN apk add --no-cache git curl
+RUN go install github.com/air-verse/air@latest
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+CMD ["air", "-c", ".air.toml"]
+
+# --- Build stage ---
+FROM golang:1.23-alpine AS build
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/api ./cmd/api
+
+# --- Production stage ---
+FROM alpine:3.19 AS production
+
+RUN apk add --no-cache ca-certificates tzdata
+
+COPY --from=build /bin/api /bin/api
+
+EXPOSE 8080
+
+ENTRYPOINT ["/bin/api"]
+```
 
 ### docker-compose.yml
 
@@ -433,6 +480,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: dev
     ports:
       - "${APP_PORT:-8080}:8080"
     volumes:
@@ -442,7 +490,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: ["air", "-c", ".air.toml"]
 
   postgres:
     image: postgres:16-alpine
@@ -463,6 +510,13 @@ services:
 volumes:
   pgdata:
 ```
+
+**Key points:**
+
+- The `target: dev` directive builds the development stage from the Dockerfile, which has `air` pre-installed and configured as the default `CMD`.
+- No explicit `command` override is needed — the dev stage's `CMD ["air", "-c", ".air.toml"]` handles live reload automatically.
+- The volume mount `.:/app` ensures source file changes on the host trigger `air` rebuilds inside the container.
+- After `make up`, the container builds, starts, and immediately begins watching for file changes with live reload.
 
 ### .air.toml (live reload)
 
@@ -492,13 +546,16 @@ When setting up the project, always create `.env.example`. If any env var value 
 
 ### .env.example
 
+The `.env` file is used by docker-compose and the containerized app. The `DB_HOST` MUST use the **docker-compose service name** (e.g., `postgres`) so the API container can reach the database over the internal Docker network.
+
 ```env
 # --- App ---
 APP_PORT=8080
 APP_ENV=development
 
 # --- Database (PostgreSQL) ---
-DB_HOST=localhost
+# DB_HOST uses the docker-compose service name for internal Docker network connectivity
+DB_HOST=postgres
 DB_PORT=5432
 DB_USER=postgres
 DB_PASSWORD=postgres
@@ -511,6 +568,8 @@ DATABASE_URL=postgres://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAM
 # KEYCLOAK_CLIENT_ID=backend          # TODO: fill in if using auth
 # KEYCLOAK_CLIENT_SECRET=             # TODO: fill in
 ```
+
+**Important**: The `DATABASE_URL` in `.env` targets the Docker internal network (`DB_HOST=postgres`). The Makefile's `migrate-*` targets run on the **host machine** and MUST use `localhost` instead. See the Makefile section for the correct `DATABASE_URL` override.
 
 ---
 
@@ -551,12 +610,14 @@ Every API handler MUST have `swaggo/swag` annotations for automatic OpenAPI spec
 // @version         1.0
 // @description     API server description
 // @host            localhost:8080
-// @BasePath        /api
+// @BasePath        /api/v1
 // @securityDefinitions.apikey BearerAuth
 // @in header
 // @name Authorization
 func main() { ... }
 ```
+
+**Important**: The `@BasePath` MUST include the API version prefix (e.g., `/api/v1`). This ensures Swagger UI displays the correct full paths (e.g., `/api/v1/users` instead of `/api/users`). When adding a new API version, update `@BasePath` accordingly or use separate Swagger specs per version.
 
 **Every handler function**:
 
