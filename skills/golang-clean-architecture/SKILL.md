@@ -114,6 +114,7 @@ PATCH  /api/v1/users/{id}         # Update user fields (partial)
 DELETE /api/v1/users/{id}         # Delete user
 ```
 
+- **snake_case for multi-word parameters**: All query parameters, JSON request/response field names, and sorting keys MUST use snake_case (underscores) when the name consists of two or more words. Examples: `page_size`, `created_at`, `user_id`, `total_items`. Never use camelCase in API schemas.
 - Resources are nouns, not verbs: `/users`, `/orders/{id}/items`
 - Use HTTP methods correctly: GET (read), POST (create), PUT (full replace), PATCH (partial update), DELETE
 - Use `Location` header on 201 Created
@@ -125,37 +126,37 @@ DELETE /api/v1/users/{id}         # Delete user
 
 - Plural nouns: `/users`, `/products`
 - Nested resources for strong ownership: `/users/{id}/addresses`
-- Flat resources with query filters for weak associations: `/orders?userId=123`
+- Flat resources with query filters for weak associations: `/orders?user_id=123`
 - Bulk operations: `POST /users/batch` or `PATCH /users` with array body
 
 ---
 
 ## 7. Pagination and Filtering
 
-All list endpoints use **page-based pagination** with `page` and `pageSize` query parameters:
+All list endpoints use **page-based pagination** with `page` and `page_size` query parameters:
 
 ```
-GET /api/v1/users?page=1&pageSize=20
-GET /api/v1/users?page=2&pageSize=20&status=active
+GET /api/v1/users?page=1&page_size=20
+GET /api/v1/users?page=2&page_size=20&status=active
 ```
 
-- **Parameters**: `page` (1-based), `pageSize` (default 20)
-- **Filtering**: query params matching field names — `?status=active&createdAfter=2025-01-01`
-- **Sorting**: `?sort=createdAt:desc,name:asc`
+- **Parameters**: `page` (1-based), `page_size` (default 20)
+- **Filtering**: query params matching field names — `?status=active&created_after=2025-01-01`
+- **Sorting**: `?sort=created_at:desc,name:asc`
 - **Pagination response** is included in the `pagination` field of the standard envelope (see section 9):
 
 ```json
 {
   "page": 1,
-  "perPage": 20,
-  "totalItems": 145,
-  "totalPages": 8,
-  "hasNext": true,
-  "hasPrev": false
+  "per_page": 20,
+  "total_items": 145,
+  "total_pages": 8,
+  "has_next": true,
+  "has_prev": false
 }
 ```
 
-**No cursor-based pagination.** Always use page + pageSize.
+**No cursor-based pagination.** Always use page + page_size.
 
 ---
 
@@ -183,7 +184,7 @@ All API responses MUST follow this structure:
   "pagination": null,
   "meta": {
     "timestamp": "2026-03-28T12:00:00Z",
-    "requestId": "e7f1b6a2-2c3d-4f11-9b8e-123456789abc"
+    "request_id": "e7f1b6a2-2c3d-4f11-9b8e-123456789abc"
   }
 }
 ```
@@ -196,7 +197,7 @@ All API responses MUST follow this structure:
 | `data`       | Main payload — object, array, or `null`                          |
 | `error`      | Error object (see 9.3) or `null` on success                      |
 | `pagination` | Pagination info (see section 7) or `null` for non-list endpoints |
-| `meta`       | Optional — `timestamp` and `requestId` for tracing               |
+| `meta`       | Optional — `timestamp` and `request_id` for tracing               |
 
 ### 9.1 Successful response without pagination
 
@@ -224,11 +225,11 @@ All API responses MUST follow this structure:
   "error": null,
   "pagination": {
     "page": 1,
-    "perPage": 20,
-    "totalItems": 145,
-    "totalPages": 8,
-    "hasNext": true,
-    "hasPrev": false
+    "per_page": 20,
+    "total_items": 145,
+    "total_pages": 8,
+    "has_next": true,
+    "has_prev": false
   }
 }
 ```
@@ -285,7 +286,7 @@ All API responses MUST follow this structure:
 func respondWithError(w http.ResponseWriter, r *http.Request, logger *slog.Logger, status int, apiErr ErrorObject, internalErr error) {
     // 1. Log the real error for the developer
     logger.Error("request error",
-        "requestId", middleware.GetRequestID(r.Context()),
+        "request_id", middleware.GetRequestID(r.Context()),
         "status", status,
         "code", apiErr.Code,
         "internal_error", internalErr,
@@ -471,6 +472,7 @@ FROM golang:1.25-alpine AS dev
 
 RUN apk add --no-cache git curl
 RUN go install github.com/air-verse/air@latest
+RUN go install github.com/swaggo/swag/cmd/swag@latest
 
 WORKDIR /app
 
@@ -559,13 +561,19 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-cmd = "go build -o ./tmp/api ./cmd/api"
+cmd = "swag init -g cmd/api/main.go -o docs/ && go build -o ./tmp/api ./cmd/api"
 bin = "tmp/api"
 watch_dir = ["cmd", "internal", "pkg"]
 include_ext = ["go", "toml", "yaml", "yml"]
-exclude_dir = ["tmp", "vendor", "node_modules"]
+exclude_dir = ["tmp", "vendor", "node_modules", "docs"]
 delay = 1000
 ```
+
+**Key points about doc regeneration:**
+
+- The `cmd` chains `swag init` before `go build` — on every code change, Swagger docs are regenerated first, then the binary is built and restarted.
+- `docs` is added to `exclude_dir` to prevent infinite rebuild loops (since `swag init` writes to `docs/`).
+- The dev Dockerfile already installs `swag` via `go install github.com/swaggo/swag/cmd/swag@latest` (see Dockerfile dev stage).
 
 ---
 
