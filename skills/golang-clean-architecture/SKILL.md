@@ -278,6 +278,25 @@ All API responses MUST follow this structure:
   - 422: unprocessable entity (valid syntax, invalid semantics)
   - 500: unexpected internal errors
 - Wrap errors with `fmt.Errorf("...: %w", err)` for stack context
+- **Developer error logging (required)**: Before returning any error response to the client, the handler MUST log the original (internal) error using the structured logger. The user-facing response contains a sanitized message; the full error details (including stack context) go to the server log so developers can debug. Example:
+
+```go
+// In the error response helper (adapter layer):
+func respondWithError(w http.ResponseWriter, r *http.Request, logger *slog.Logger, status int, apiErr ErrorObject, internalErr error) {
+    // 1. Log the real error for the developer
+    logger.Error("request error",
+        "requestId", middleware.GetRequestID(r.Context()),
+        "status", status,
+        "code", apiErr.Code,
+        "internal_error", internalErr,
+    )
+    // 2. Return the sanitized error to the user
+    respondJSON(w, status, APIResponse{
+        Status: "error",
+        Error:  &apiErr,
+    })
+}
+```
 
 ---
 
@@ -375,11 +394,13 @@ build:            ## Build the binary
 	@go build -o bin/api ./cmd/api
 
 # --- Docker ---
-.PHONY: up down
+.PHONY: up down stop
 up:               ## Build and start all services (docker-compose) with live reload
 	@docker-compose up -d --build
-down:             ## Stop all services
+down:             ## Stop and remove all services
 	@docker-compose down
+stop:             ## Stop all services without removing them
+	@docker compose stop
 
 # --- Database / Migrations ---
 # Migrations run on the HOST machine, so DATABASE_URL uses localhost (not the docker service name).
@@ -414,6 +435,19 @@ lint:             ## Run linter
 .PHONY: swagger
 swagger:          ## Generate OpenAPI spec from annotations
 	@swag init -g cmd/api/main.go -o docs/
+
+# --- Init (full project bootstrap) ---
+.PHONY: init
+init:             ## Generate docs, start docker, wait for DB, run migrations, print success
+	@echo "Generating Swagger documentation..."
+	@swag init -g cmd/api/main.go -o docs/
+	@echo "Starting Docker services..."
+	@docker-compose up -d --build
+	@echo "Waiting for PostgreSQL to be ready..."
+	@until docker-compose exec -T postgres pg_isready -U $${DB_USER:-postgres} > /dev/null 2>&1; do sleep 1; done
+	@echo "Running migrations..."
+	@migrate -path internal/adapter/postgres/migrations -database "$(DATABASE_URL)" up
+	@echo "Project successfully started!"
 
 # --- Helpers ---
 .PHONY: help
