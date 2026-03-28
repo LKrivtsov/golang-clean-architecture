@@ -467,7 +467,7 @@ The Dockerfile MUST always be created at the project root. It uses a multi-stage
 
 ```dockerfile
 # --- Development stage (used by docker-compose for live reload) ---
-FROM golang:1.23-alpine AS dev
+FROM golang:1.25-alpine AS dev
 
 RUN apk add --no-cache git curl
 RUN go install github.com/air-verse/air@latest
@@ -482,7 +482,7 @@ COPY . .
 CMD ["air", "-c", ".air.toml"]
 
 # --- Build stage ---
-FROM golang:1.23-alpine AS build
+FROM golang:1.25-alpine AS build
 
 WORKDIR /app
 
@@ -674,11 +674,12 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) { ... }
 
 ### Swagger UI endpoint
 
-The project MUST serve Swagger UI so developers can browse and test all endpoints:
+The project MUST **always** register the Swagger UI route — it is not optional and must never be removed or guarded behind a feature flag or environment check. The Swagger route is a permanent part of every project's router setup:
 
 ```go
 import httpSwagger "github.com/swaggo/http-swagger"
 
+// This route MUST always be registered — never conditionally skip it.
 router.Get("/swagger/*", httpSwagger.WrapHandler)
 ```
 
