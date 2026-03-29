@@ -2,15 +2,15 @@
 name: golang-clean-architecture
 description: >
   Opinionated guidance for building production-grade Go backends using Clean
-  Architecture and Domain-Driven Design. Covers project structure, REST API
-  patterns, error handling, migrations, middleware, testing, Makefile, Docker
-  Compose, Keycloak auth, PostgreSQL, and Swagger/OpenAPI. Trigger when
-  scaffolding Go backend services or working with layered/hexagonal Go projects.
+  Architecture. Covers project structure, REST API patterns, error handling,
+  migrations, middleware, Makefile, Docker Compose, Keycloak auth, PostgreSQL,
+  and Swagger/OpenAPI. Trigger when scaffolding Go backend services or working
+  with layered/hexagonal Go projects.
 ---
 
-# Skill: Golang Backend — Clean Architecture & DDD
+# Skill: Golang Backend — Clean Architecture
 
-Opinionated guidance for building production-grade Go backends using Clean Architecture and Domain-Driven Design. Follow these conventions when scaffolding, extending, or reviewing Go backend services that use a layered/hexagonal structure.
+Opinionated guidance for building production-grade Go backends using Clean Architecture. Follow these conventions when scaffolding, extending, or reviewing Go backend services that use a layered/hexagonal structure.
 
 ---
 
@@ -20,8 +20,8 @@ Opinionated guidance for building production-grade Go backends using Clean Archi
 
 - User is scaffolding a new Go backend service
 - Project contains `go.mod` and follows a layered/hexagonal structure
-- User asks about REST API design, DDD patterns, or clean architecture in Go
-- Files match patterns like `internal/domain/`, `internal/usecase/`, `cmd/api/`
+- User asks about REST API design or clean architecture in Go
+- Files match patterns like `internal/entity/`, `internal/usecase/`, `cmd/api/`
 
 **Do NOT trigger when:**
 
@@ -32,63 +32,53 @@ Opinionated guidance for building production-grade Go backends using Clean Archi
 
 ## 2. Core Concepts
 
-- **Domain layer**: Pure business logic, no framework dependencies. Entities, value objects, domain events, repository interfaces.
-- **Use-case (application) layer**: Orchestrates domain logic. Input/output ports. Transaction boundaries.
+- **Entity layer**: Business logic and data structures. Each entity keeps its struct, repository interface, and domain errors in a single file.
+- **Use-case (application) layer**: Orchestrates entity logic. Input/output ports. Transaction boundaries.
 - **Interface (adapter) layer**: HTTP handlers, gRPC servers, DB implementations, external service clients.
 - **Infrastructure layer**: Framework glue, config, DI wiring, logging setup.
-- **Dependency rule**: Dependencies point inward — domain never imports from outer layers.
-- **Inter-layer data transfer**: All data between layers MUST be passed via explicitly typed structs — never raw maps, `interface{}`, or leaked domain entities. Transport layer uses request/response DTOs; use-case layer defines its own input/output structs; repository layer accepts and returns domain entities or dedicated query/result structs.
+- **Dependency rule**: Dependencies point inward — entities never import from outer layers.
+- **Inter-layer data transfer**: All data between layers MUST be passed via explicitly typed structs — never raw maps, `interface{}`, or leaked entities. Transport layer uses request/response DTOs; use-case layer defines its own input/output structs; repository layer accepts and returns entities or dedicated query/result structs.
 
 ---
 
 ## 3. Project Structure
 
-Designed for 100% test coverage. Every layer has a clear interface boundary that can be mocked.
+Each entity keeps all its logic (struct, repository interface, errors) in **one file** — no splitting across multiple files per entity.
 
 ```
 cmd/
   api/              # main.go, server bootstrap
 internal/
-  domain/           # entities, value objects, repository interfaces, domain errors
-    user/
-      entity.go
-      repository.go     # interface — mockable
-      errors.go
-      entity_test.go    # domain logic unit tests
+  entity/           # business entities — one file per entity
+    user.go         # User struct, UserRepository interface, domain errors
   usecase/          # application services, input/output structs
     user/
       create.go
-      create_test.go    # unit tests with mocked repo interface
       get.go
-      get_test.go
       dto.go            # use-case input/output structs
   adapter/
     http/            # handlers, routes, middleware
       v1/
         user_handler.go
-        user_handler_test.go  # unit tests with mocked use-case
         router.go
         dto.go              # request/response DTOs (transport layer)
         mapper.go           # DTO <-> use-case struct mapping
     postgres/        # repository implementations
       user_repo.go
-      user_repo_test.go     # integration tests against test DB
       migrations/
   infrastructure/
     config/          # env parsing, config structs
     logger/          # structured logging setup
     server/          # HTTP server lifecycle
 pkg/                 # shared utilities (optional, keep minimal)
-docs/                # generated OpenAPI/Swagger spec (see section 20)
-Dockerfile           # multi-stage build: dev (air) + production (see section 16)
-Makefile             # project automation (see section 15)
-docker-compose.yml   # local dev environment (see section 16)
+docs/                # generated OpenAPI/Swagger spec (see section 19)
+Dockerfile           # multi-stage build: dev (air) + production (see section 15)
+Makefile             # project automation (see section 14)
+docker-compose.yml   # local dev environment (see section 15)
 .air.toml            # live reload config
-.env                 # environment variables — DB_HOST=postgres (docker network) (see section 17)
+.env                 # environment variables — DB_HOST=postgres (docker network) (see section 16)
 .env.example         # template with placeholder values
 ```
-
-**Testing rule**: Every piece of code MUST have unit tests. When writing any new code — handler, use-case, entity, repository — always create the corresponding `_test.go` file. Use table-driven tests. Mock all external dependencies via interfaces.
 
 ---
 
@@ -307,25 +297,25 @@ func respondWithError(w http.ResponseWriter, r *http.Request, logger *slog.Logge
 
 1. **Transport DTOs** (adapter/http layer):
    - `CreateUserRequest` — request body with validation tags (`validate:"required,email"`)
-   - `UserResponse` — what the API returns, separate from domain entity
+   - `UserResponse` — what the API returns, separate from entity
    - Lives in `adapter/http/v1/dto.go`
 2. **Use-case DTOs** (usecase layer):
    - `CreateUserInput` — what the use-case accepts
    - `CreateUserOutput` / `UserResult` — what the use-case returns
    - Lives in `usecase/user/dto.go`
-3. **Domain entities** (domain layer):
-   - `User` — the core domain struct
-   - Repository interface accepts/returns domain entities
-   - Lives in `domain/user/entity.go`
+3. **Entities** (entity layer):
+   - `User` — the core entity struct
+   - Repository interface accepts/returns entities
+   - Lives in `entity/user.go`
 
 **Mapping functions** convert between layers:
 
 - `adapter/http/v1/mapper.go`: `requestToInput()`, `outputToResponse()`
-- `usecase/user/`: works directly with domain entities via repository interface
+- `usecase/user/`: works directly with entities via repository interface
 
-Never leak domain entities into API responses. Never reuse a request DTO as a response DTO.
+Never leak entities into API responses. Never reuse a request DTO as a response DTO.
 
-**Struct change verification rule**: When modifying any request or response struct, you MUST verify that all handlers and methods that use that struct still compile and behave correctly. Check every caller and consumer of the changed struct across all layers (transport -> use-case -> repository). Run `go build ./...` and `go test ./...` after any struct change.
+**Struct change verification rule**: When modifying any request or response struct, you MUST verify that all handlers and methods that use that struct still compile and behave correctly. Check every caller and consumer of the changed struct across all layers (transport -> use-case -> repository). Run `go build ./...` after any struct change.
 
 ---
 
@@ -357,32 +347,7 @@ Never leak domain entities into API responses. Never reuse a request DTO as a re
 
 ---
 
-## 14. Testing Strategy
-
-**Every file gets a test file. No exceptions.**
-
-- **Domain tests**: Pure unit tests — no mocks needed, test entity behavior and validation directly
-- **Use-case tests**: Mock repository interfaces (use `gomock` or hand-written mocks). Test business logic in isolation.
-- **Handler tests**: Mock use-case interfaces. Test HTTP request parsing, validation, response formatting.
-- **Repository tests**: Integration tests against a test PostgreSQL database (use `testcontainers-go` or a shared test DB)
-- **Table-driven tests**: Default pattern for all tests
-- **Interface-driven design**: Every cross-layer dependency is an interface -> every dependency is mockable -> 100% unit test coverage is achievable
-
-```go
-// Example: use-case depends on repository interface
-type UserRepository interface {
-    Create(ctx context.Context, user *User) error
-    GetByID(ctx context.Context, id string) (*User, error)
-}
-
-// In tests, inject a mock:
-type mockUserRepo struct { ... }
-func (m *mockUserRepo) Create(ctx context.Context, user *User) error { ... }
-```
-
----
-
-## 15. Makefile
+## 14. Makefile
 
 Every project MUST have a `Makefile` at the root. It is the single entry point for all project automation:
 
@@ -415,17 +380,6 @@ migrate-down:     ## Roll back the last migration
 migrate-create:   ## Create a new migration (usage: make migrate-create name=add_users)
 	@migrate create -ext sql -dir internal/adapter/postgres/migrations -seq $(name)
 
-# --- Testing ---
-.PHONY: test test-coverage
-test:             ## Run all tests
-	@go test ./... -v
-test-coverage:    ## Run tests with coverage report
-	@go test ./... -coverprofile=coverage.out && go tool cover -html=coverage.out -o coverage.html
-
-# --- Code Generation ---
-.PHONY: mocks
-mocks:            ## Generate mocks (mockgen)
-	@go generate ./...
 
 # --- Linting ---
 .PHONY: lint
@@ -458,7 +412,7 @@ help:             ## Show this help
 
 ---
 
-## 16. Dockerfile, Docker Compose & Live Reload
+## 15. Dockerfile, Docker Compose & Live Reload
 
 Every project MUST have a `Dockerfile` and a `docker-compose.yml` for local development. Use `air` for live reload of the Go server.
 
@@ -473,6 +427,7 @@ FROM golang:1.25-alpine AS dev
 RUN apk add --no-cache git curl
 RUN go install github.com/air-verse/air@latest
 RUN go install github.com/swaggo/swag/cmd/swag@latest
+RUN go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
 
 WORKDIR /app
 
@@ -561,23 +516,24 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-cmd = "swag init -g cmd/api/main.go -o docs/ && go build -o ./tmp/api ./cmd/api"
+cmd = "migrate -path internal/adapter/postgres/migrations -database \"$DATABASE_URL\" up && swag init -g cmd/api/main.go -o docs/ && go build -o ./tmp/api ./cmd/api"
 bin = "tmp/api"
 watch_dir = ["cmd", "internal", "pkg"]
-include_ext = ["go", "toml", "yaml", "yml"]
+include_ext = ["go", "toml", "yaml", "yml", "sql"]
 exclude_dir = ["tmp", "vendor", "node_modules", "docs"]
 delay = 1000
 ```
 
-**Key points about doc regeneration:**
+**Key points:**
 
-- The `cmd` chains `swag init` before `go build` — on every code change, Swagger docs are regenerated first, then the binary is built and restarted.
+- The `cmd` chains three steps: (1) run pending migrations, (2) regenerate Swagger docs, (3) build the binary. On every restart (including file changes), migrations are applied first.
+- `sql` is included in `include_ext` so that new migration files trigger a rebuild and migration run.
 - `docs` is added to `exclude_dir` to prevent infinite rebuild loops (since `swag init` writes to `docs/`).
-- The dev Dockerfile already installs `swag` via `go install github.com/swaggo/swag/cmd/swag@latest` (see Dockerfile dev stage).
+- The dev Dockerfile must install both `swag` and `migrate` (see Dockerfile dev stage).
 
 ---
 
-## 17. Environment Variables (.env)
+## 16. Environment Variables (.env)
 
 Every project MUST have:
 
@@ -615,7 +571,7 @@ DATABASE_URL=postgres://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAM
 
 ---
 
-## 18. Authentication (Keycloak)
+## 17. Authentication (Keycloak)
 
 If the project uses authentication, the identity provider is **Keycloak**. Always.
 
@@ -627,19 +583,18 @@ If the project uses authentication, the identity provider is **Keycloak**. Alway
 
 ---
 
-## 19. Database (PostgreSQL)
+## 18. Database (PostgreSQL)
 
 The database is always **PostgreSQL**.
 
 - Use `pgx` as the driver (preferred) or `database/sql` with `lib/pq`
 - Connection pooling: configure `max_open_conns`, `max_idle_conns`, `conn_max_lifetime` in config
 - Migrations target PostgreSQL syntax
-- Repository integration tests run against a real PostgreSQL instance (via docker-compose or testcontainers-go)
 - Connection string format: `postgres://user:pass@host:port/dbname?sslmode=disable`
 
 ---
 
-## 20. Swagger / OpenAPI Documentation
+## 19. Swagger / OpenAPI Documentation
 
 Every API handler MUST have `swaggo/swag` annotations for automatic OpenAPI spec generation.
 
