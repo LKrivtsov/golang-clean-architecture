@@ -33,7 +33,7 @@ Opinionated guidance for building production-grade Go backends using Clean Archi
 ## 2. Core Concepts
 
 - **Entity layer**: Business logic and data structures. Each entity keeps its struct, repository interface, and domain errors in a single file.
-- **Use-case (application) layer**: Orchestrates entity logic. Input/output ports. Transaction boundaries.
+- **Use-case (application) layer**: Orchestrates entity logic. Input/output ports. Transaction boundaries. Each entity's use-case service, its methods, and DTOs live in a single file.
 - **Interface (adapter) layer**: HTTP handlers, gRPC servers, DB implementations, external service clients.
 - **Infrastructure layer**: Framework glue, config, DI wiring, logging setup.
 - **Dependency rule**: Dependencies point inward — entities never import from outer layers.
@@ -43,7 +43,7 @@ Opinionated guidance for building production-grade Go backends using Clean Archi
 
 ## 3. Project Structure
 
-Each entity keeps all its logic (struct, repository interface, errors) in **one file** — no splitting across multiple files per entity.
+Every layer follows a **one file per entity** rule — no splitting across multiple files per entity. Entity files hold struct + repository interface + domain errors; use-case files hold all methods + input/output DTOs; handler files hold all HTTP handlers; repo files hold all queries.
 
 ```
 cmd/
@@ -52,10 +52,7 @@ internal/
   entity/           # business entities — one file per entity
     user.go         # User struct, UserRepository interface, domain errors
   usecase/          # application services, input/output structs
-    user/
-      create.go
-      get.go
-      dto.go            # use-case input/output structs
+    user.go           # all use-case methods + input/output DTOs for User
   adapter/
     http/            # handlers, routes, middleware
       v1/
@@ -302,7 +299,7 @@ func respondWithError(w http.ResponseWriter, r *http.Request, logger *slog.Logge
 2. **Use-case DTOs** (usecase layer):
    - `CreateUserInput` — what the use-case accepts
    - `CreateUserOutput` / `UserResult` — what the use-case returns
-   - Lives in `usecase/user/dto.go`
+   - Lives alongside use-case methods in `usecase/user.go`
 3. **Entities** (entity layer):
    - `User` — the core entity struct
    - Repository interface accepts/returns entities
@@ -311,7 +308,7 @@ func respondWithError(w http.ResponseWriter, r *http.Request, logger *slog.Logge
 **Mapping functions** convert between layers:
 
 - `adapter/http/v1/mapper.go`: `requestToInput()`, `outputToResponse()`
-- `usecase/user/`: works directly with entities via repository interface
+- `usecase/user.go`: works directly with entities via repository interface
 
 Never leak entities into API responses. Never reuse a request DTO as a response DTO.
 
