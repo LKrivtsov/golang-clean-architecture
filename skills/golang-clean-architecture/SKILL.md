@@ -38,6 +38,7 @@ Opinionated guidance for building production-grade Go backends using Clean Archi
 - **Infrastructure layer**: Framework glue, config, DI wiring, logging setup.
 - **Dependency rule**: Dependencies point inward — entities never import from outer layers.
 - **Inter-layer data transfer**: All data between layers MUST be passed via explicitly typed structs — never raw maps, `interface{}`, or leaked entities. Transport layer uses request/response DTOs; use-case layer defines its own input/output structs; repository layer accepts and returns entities or dedicated query/result structs.
+- **UUID identifiers (required)**: All entity IDs MUST be of type UUID (`uuid.UUID` from `github.com/google/uuid`). Never use integer auto-increment IDs. Generate UUIDs at creation time (typically in the use-case or repository layer). In PostgreSQL, use the `uuid` column type. In JSON responses, UUIDs are serialized as strings (e.g., `"id": "550e8400-e29b-41d4-a716-446655440000"`).
 
 ---
 
@@ -192,7 +193,7 @@ All API responses MUST follow this structure:
 {
   "status": "success",
   "data": {
-    "id": 123,
+    "id": "550e8400-e29b-41d4-a716-446655440000",
     "name": "Test"
   },
   "error": null,
@@ -206,8 +207,8 @@ All API responses MUST follow this structure:
 {
   "status": "success",
   "data": [
-    { "id": 1, "name": "Item 1" },
-    { "id": 2, "name": "Item 2" }
+    { "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890", "name": "Item 1" },
+    { "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901", "name": "Item 2" }
   ],
   "error": null,
   "pagination": {
